@@ -1,8 +1,11 @@
 """Tests for the Synology DSM config flow."""
 
 from ipaddress import ip_address
+import ssl
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+from aiohttp import ClientConnectorCertificateError
+from aiohttp.client_reqrep import ConnectionKey
 import pytest
 from synology_dsm.api.file_station.models import SynoFileSharedFolder
 from synology_dsm.exceptions import (
@@ -11,6 +14,7 @@ from synology_dsm.exceptions import (
     SynologyDSMLogin2SARequiredException,
     SynologyDSMLoginInvalidException,
     SynologyDSMRequestException,
+    SynologyDSMSSLException,
 )
 from syrupy.assertion import SnapshotAssertion
 
@@ -553,6 +557,28 @@ async def test_connection_failed(hass: HomeAssistant, service: MagicMock) -> Non
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_HOST: "cannot_connect"}
+
+
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_ssl_failed(hass: HomeAssistant, service: MagicMock) -> None:
+    """Test when the certificate of the NAS can't be verified."""
+    service.return_value.login = Mock(
+        side_effect=SynologyDSMSSLException(
+            ClientConnectorCertificateError(
+                ConnectionKey("nas", 5001, True, True, None, None, None),
+                ssl.SSLCertVerificationError(1, "certificate has expired"),
+            )
+        )
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+        data={CONF_HOST: HOST, CONF_USERNAME: USERNAME, CONF_PASSWORD: PASSWORD},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_HOST: "ssl_error"}
 
 
 @pytest.mark.usefixtures("mock_setup_entry")

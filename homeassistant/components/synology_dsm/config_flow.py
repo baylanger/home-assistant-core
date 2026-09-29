@@ -16,6 +16,7 @@ from synology_dsm.exceptions import (
     SynologyDSMLogin2SARequiredException,
     SynologyDSMLoginInvalidException,
     SynologyDSMRequestException,
+    SynologyDSMSSLException,
 )
 
 from homeassistant.config_entries import (
@@ -226,6 +227,9 @@ class SynologyDSMFlowHandler(ConfigFlow, domain=DOMAIN):
         except SynologyDSMLoginInvalidException as ex:
             _LOGGER.error(ex)
             errors[CONF_USERNAME] = "invalid_auth"
+        except SynologyDSMSSLException as ex:
+            _LOGGER.error(ex)
+            errors[CONF_HOST] = "ssl_error"
         except SynologyDSMRequestException as ex:
             _LOGGER.error(ex)
             errors[CONF_HOST] = "cannot_connect"

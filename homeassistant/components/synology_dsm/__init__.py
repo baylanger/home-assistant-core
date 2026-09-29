@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING
 
 from synology_dsm.api.surveillance_station import SynoSurveillanceStation
 from synology_dsm.api.surveillance_station.camera import SynoCamera
-from synology_dsm.exceptions import SynologyDSMNotLoggedInException
+from synology_dsm.exceptions import (
+    SynologyDSMNotLoggedInException,
+    SynologyDSMSSLException,
+)
 
 from homeassistant.const import CONF_MAC, CONF_SCAN_INTERVAL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
@@ -14,7 +17,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.typing import ConfigType
 
-from .common import SynoApi, raise_config_entry_auth_error
+from .common import SynoApi, get_exception_details, raise_config_entry_auth_error
 from .const import (
     CONF_BACKUP_PATH,
     CONF_BACKUP_SHARE,
@@ -89,6 +92,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: SynologyDSMConfigEntry) 
         await api.async_setup()
     except SYNOLOGY_AUTH_FAILED_EXCEPTIONS as err:
         raise_config_entry_auth_error(err)
+    except SynologyDSMSSLException as err:
+        raise ConfigEntryNotReady(
+            f"SSL certificate error, check the certificate of your NAS: "
+            f"{get_exception_details(err)}"
+        ) from err
     except (*SYNOLOGY_CONNECTION_EXCEPTIONS, SynologyDSMNotLoggedInException) as err:
         # SynologyDSMNotLoggedInException may be raised even if the user is
         # logged in because the session may have expired, and we need to retry

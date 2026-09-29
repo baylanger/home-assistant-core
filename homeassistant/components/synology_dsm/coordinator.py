@@ -4,12 +4,13 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import timedelta
 import logging
-from typing import TYPE_CHECKING, Any, Concatenate, override
+from typing import TYPE_CHECKING, Any, Concatenate, NoReturn, override
 
 from synology_dsm.api.surveillance_station.camera import SynoCamera
 from synology_dsm.exceptions import (
     SynologyDSMAPIErrorException,
     SynologyDSMNotLoggedInException,
+    SynologyDSMSSLException,
 )
 
 from homeassistant.config_entries import ConfigEntry
@@ -17,7 +18,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .common import SynoApi, raise_config_entry_auth_error
+from .common import SynoApi, get_exception_details, raise_config_entry_auth_error
 from .const import (
     SIGNAL_CAMERA_SOURCE_CHANGED,
     SYNOLOGY_AUTH_FAILED_EXCEPTIONS,
@@ -41,6 +42,16 @@ class SynologyDSMData:
 type SynologyDSMConfigEntry = ConfigEntry[SynologyDSMData]
 
 
+def _raise_update_failed(err: Exception) -> NoReturn:
+    """Raise UpdateFailed with a message matching the connection error."""
+    if isinstance(err, SynologyDSMSSLException):
+        raise UpdateFailed(
+            "SSL certificate error, check the certificate of your NAS: "
+            f"{get_exception_details(err)}"
+        ) from err
+    raise UpdateFailed(f"Error communicating with API: {err}") from err
+
+
 def async_re_login_on_expired[_T: SynologyDSMUpdateCoordinator[Any], **_P, _R](
     func: Callable[Concatenate[_T, _P], Awaitable[_R]],
 ) -> Callable[Concatenate[_T, _P], Coroutine[Any, Any, _R]]:
@@ -57,10 +68,12 @@ def async_re_login_on_expired[_T: SynologyDSMUpdateCoordinator[Any], **_P, _R](
                     await self.api.async_login()
                 except SYNOLOGY_AUTH_FAILED_EXCEPTIONS as err:
                     raise_config_entry_auth_error(err)
+                except SYNOLOGY_CONNECTION_EXCEPTIONS as err:
+                    _raise_update_failed(err)
                 if attempts == 0:
                     continue
             except SYNOLOGY_CONNECTION_EXCEPTIONS as err:
-                raise UpdateFailed(f"Error communicating with API: {err}") from err
+                _raise_update_failed(err)
 
         raise UpdateFailed("Unknown error when communicating with API")
 

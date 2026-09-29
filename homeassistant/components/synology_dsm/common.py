@@ -449,6 +449,13 @@ class SynoApi:
         await self.dsm.update(self._with_information)
 
 
+def get_exception_details(err: Exception) -> str:
+    """Return the details of a synology_dsm exception."""
+    if err.args and isinstance(err.args[0], dict):
+        return err.args[0].get(EXCEPTION_DETAILS) or EXCEPTION_UNKNOWN
+    return EXCEPTION_UNKNOWN
+
+
 def raise_config_entry_auth_error(err: Exception) -> None:
     """Raise ConfigEntryAuthFailed if error is related to authentication."""
     if err.args[0] and isinstance(err.args[0], dict):
