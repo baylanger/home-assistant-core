@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
 import contextlib
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import partial
 import logging
 import threading
@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, override
 from pyhik.image import PRIVILEGE_SUB_STATUSES, ImageSetting, ImageWriteResult
 from pyhik.isapi import ISAPIAuthError, ISAPIClient, ISAPIConnectionError, ISAPIError
 
+from homeassistant.config_entries import SOURCE_RECONFIGURE
 from homeassistant.const import (
     ATTR_DEVICE_ID,
     ATTR_ENTITY_ID,
@@ -22,6 +23,7 @@ from homeassistant.const import (
 from homeassistant.core import Context, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import ATTR_MESSAGE, ATTR_NAME, DOMAIN, EVENT_IMAGE_SETTING_CHANGED
@@ -32,6 +34,9 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=30)
+# How often to look whether a form of the entry, which keeps Home Assistant from
+# asking for new credentials, has been closed
+REAUTH_RETRY_INTERVAL = timedelta(minutes=1)
 # The cameras of an NVR share one client and one lock, so they are polled one after
 # the other. A slower poll keeps a write from waiting behind dozens of reads.
 NVR_SCAN_INTERVAL = timedelta(minutes=5)
@@ -240,6 +245,41 @@ async def async_run_to_end[_T](
                 )
         raise
     return future.result()
+
+
+@callback
+def async_start_reauth(hass: HomeAssistant, entry: HikvisionConfigEntry) -> None:
+    """Ask for new credentials, as soon as Home Assistant can.
+
+    Home Assistant does not start a reauthentication while another flow of the entry
+    is open, a form to reconfigure it for example. If that form is closed without a
+    change, nothing would ask again, and the entry would stay stopped with the
+    rejected password. So this asks again, once no such form is open. Saving the
+    form reloads the entry, and unloading it ends this.
+    """
+    entry.async_start_reauth(hass)
+    if not any(entry.async_get_active_flows(hass, {SOURCE_RECONFIGURE})):
+        return
+    cancel: Callable[[], None] | None = None
+
+    @callback
+    def _async_retry(_now: datetime) -> None:
+        nonlocal cancel
+        if any(entry.async_get_active_flows(hass, {SOURCE_RECONFIGURE})):
+            return
+        entry.async_start_reauth(hass)
+        if cancel is not None:
+            cancel()
+            cancel = None
+
+    cancel = async_track_time_interval(hass, _async_retry, REAUTH_RETRY_INTERVAL)
+
+    @callback
+    def _async_stop() -> None:
+        if cancel is not None:
+            cancel()
+
+    entry.async_on_unload(_async_stop)
 
 
 async def async_stop_stream(hass: HomeAssistant, data: HikvisionData) -> None:
@@ -551,7 +591,7 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
                     translation_domain=DOMAIN, translation_key="invalid_auth"
                 )
             )
-            self.config_entry.async_start_reauth(self.hass)
+            async_start_reauth(self.hass, self.config_entry)
 
     async def _async_reject_credentials(
         self, *, after_failed_unload: bool = False
@@ -591,7 +631,7 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
                 translation_domain=DOMAIN, translation_key="invalid_auth"
             )
         )
-        self.config_entry.async_start_reauth(self.hass)
+        async_start_reauth(self.hass, self.config_entry)
 
     async def async_stream_rejected(self) -> None:
         """Deal with the event stream being refused the password of this client.

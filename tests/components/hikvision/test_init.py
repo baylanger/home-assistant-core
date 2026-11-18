@@ -26,13 +26,20 @@ from homeassistant.components.hikvision import (
     STREAM_CREDENTIALS,
 )
 from homeassistant.components.hikvision.const import CONF_RANDOM_ID, DOMAIN
-from homeassistant.components.hikvision.coordinator import SCAN_INTERVAL
+from homeassistant.components.hikvision.coordinator import (
+    REAUTH_RETRY_INTERVAL,
+    SCAN_INTERVAL,
+)
 from homeassistant.components.number import (
     ATTR_VALUE,
     DOMAIN as NUMBER_DOMAIN,
     SERVICE_SET_VALUE,
 )
-from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
+from homeassistant.config_entries import (
+    SOURCE_REAUTH,
+    SOURCE_RECONFIGURE,
+    ConfigEntryState,
+)
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     CONF_HOST,
@@ -47,6 +54,7 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN, CoreState, HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
     device_registry as dr,
@@ -951,6 +959,66 @@ async def test_credentials_watch_is_removed_on_unload(
     camera.remove_update_callback.assert_any_call(
         callback, f"{TEST_DEVICE_ID}.{STREAM_CREDENTIALS}"
     )
+
+
+async def test_reauth_is_asked_again_when_a_reconfigure_form_is_closed(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_hikcamera: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test the entry does not stay stopped, without a prompt, behind a form."""
+    await setup_integration(hass, mock_config_entry)
+    result = await mock_config_entry.start_reconfigure_flow(hass)
+    assert result["type"] is FlowResultType.FORM
+
+    camera = mock_hikcamera.return_value
+    camera.stream_auth_failed = True
+    await hass.async_add_executor_job(_credentials_callback(camera), "")
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    # Home Assistant does not start a reauthentication next to the form.
+    camera.disconnect.assert_called_once()
+    assert [
+        flow["context"]["source"] for flow in hass.config_entries.flow.async_progress()
+    ] == [SOURCE_RECONFIGURE]
+
+    # Still open: nothing changes.
+    freezer.tick(REAUTH_RETRY_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert [
+        flow["context"]["source"] for flow in hass.config_entries.flow.async_progress()
+    ] == [SOURCE_RECONFIGURE]
+
+    hass.config_entries.flow.async_abort(result["flow_id"])
+    freezer.tick(REAUTH_RETRY_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert [
+        flow["context"]["source"] for flow in hass.config_entries.flow.async_progress()
+    ] == [SOURCE_REAUTH]
+
+
+async def test_a_stream_callback_queued_before_the_unload_does_nothing_after_it(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_hikcamera: MagicMock,
+) -> None:
+    """Test an old stream does not start a reauthentication on an unloaded entry."""
+    await setup_integration(hass, mock_config_entry)
+    camera = mock_hikcamera.return_value
+    callback = _credentials_callback(camera)
+    await hass.config_entries.async_unload(mock_config_entry.entry_id)
+    camera.disconnect.reset_mock()
+
+    camera.stream_auth_failed = True
+    await hass.async_add_executor_job(callback, "")
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    camera.disconnect.assert_not_called()
+    assert not hass.config_entries.flow.async_progress()
 
 
 @pytest.mark.usefixtures("mock_hikcamera")

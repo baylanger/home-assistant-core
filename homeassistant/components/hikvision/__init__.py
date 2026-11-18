@@ -52,6 +52,7 @@ from .coordinator import (
     HikvisionImageCoordinator,
     async_complete,
     async_run_to_end,
+    async_start_reauth,
     async_stop_stream,
 )
 from .identity import (
@@ -475,7 +476,7 @@ def _async_watch_stream_credentials(
             await coordinators[0].async_stream_rejected()
             return
         await async_stop_stream(hass, data)
-        entry.async_start_reauth(hass)
+        async_start_reauth(hass, entry)
 
     @callback
     def _async_check() -> None:
