@@ -86,7 +86,7 @@ async def test_a_write_queued_behind_the_unload_is_refused(
     polling does not stop it, and the client is closed by then.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
 
     async with coordinator.lock:
         unload = hass.async_create_task(
@@ -116,7 +116,7 @@ async def test_a_cancelled_write_keeps_the_client_until_the_request_ends(
     or the unload closing the client, must not use the client at the same time.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -156,7 +156,7 @@ async def test_a_cancelled_write_that_gets_a_401_still_rejects_the_password(
     sending the rejected password, which can lock the account.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -239,7 +239,7 @@ async def test_a_write_rejected_during_a_reload_does_not_ask_for_credentials(
     is still recorded, so nothing queued sends the old password again.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -273,7 +273,7 @@ async def test_a_poll_rejected_during_a_reload_does_not_ask_for_credentials(
 ) -> None:
     """Test a 401 of a poll that ends once shutdown has started starts no reauth."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -312,7 +312,7 @@ async def test_a_write_rejected_while_the_platforms_unload_does_not_ask_for_cred
     first.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -350,7 +350,7 @@ async def test_a_failed_unload_still_asks_for_credentials_later(
 ) -> None:
     """Test an unload that fails leaves the entry dealing with a 401 as before."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
 
     with patch.object(
         hass.config_entries,
@@ -386,7 +386,7 @@ async def test_a_poll_queued_behind_a_rejected_write_during_shutdown_is_skipped(
     which would start a reauthentication while the entry reloads.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -424,7 +424,7 @@ async def test_a_poll_rejected_as_the_unload_begins_does_not_ask_for_credentials
 ) -> None:
     """Test a 401 whose stream stop overlaps the start of an unload starts no reauth."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
 
     def _unload_begins() -> None:
         coordinator.unloading = True
@@ -450,7 +450,7 @@ async def test_a_write_rejected_as_the_unload_begins_does_not_ask_for_credential
 ) -> None:
     """Test a write's 401 whose stream stop overlaps an unload starts no reauth."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
 
     def _unload_begins() -> None:
         coordinator.unloading = True
@@ -499,7 +499,7 @@ async def test_a_rejection_deferred_by_a_failed_unload_is_dealt_with(
     The stream would otherwise keep sending the rejected password.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -558,7 +558,7 @@ async def test_a_deferred_rejection_of_replaced_credentials_is_dropped(
     sending the rejected password.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.side_effect = ISAPIAuthError(
         "Invalid credentials", 401
     )
@@ -601,7 +601,7 @@ async def test_an_unload_that_fails_to_stop_the_stream_leaves_the_entry_polling(
 ) -> None:
     """Test a failure after the platforms unloaded does not leave it unloading."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_hikcamera.return_value.disconnect.side_effect = RuntimeError("stuck")
 
     await hass.config_entries.async_unload(mock_config_entry.entry_id)
@@ -624,7 +624,7 @@ async def test_a_write_while_unloading_does_not_poll(
     The poll would only be refused, and make the entities unavailable.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     polls = mock_image_settings.get_image_values.call_count
 
     coordinator.unloading = True
@@ -675,7 +675,7 @@ async def test_refreshes_after_a_rejected_poll_send_nothing(
 ) -> None:
     """Test the refreshes after a 401 do not send the rejected password again."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.get_image_values.side_effect = ISAPIAuthError(
         "Invalid credentials", 401
     )
@@ -710,7 +710,7 @@ async def test_an_error_resuming_after_a_failed_unload_does_not_hide_its_cause(
 ) -> None:
     """Test the unload's own error is the one reported, and the other is logged."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.side_effect = ISAPIAuthError(
         "Invalid credentials", 401
     )
@@ -744,7 +744,7 @@ async def test_a_401_after_the_credentials_were_replaced_asks_for_nothing(
     The 401 is about the old credentials of this client, which the reload replaces.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     error = ISAPIAuthError("Invalid credentials", 401)
     mock_image_settings.set_image_setting.side_effect = error
     mock_image_settings.get_image_values.side_effect = error
@@ -799,7 +799,7 @@ async def test_a_cancelled_write_still_shows_what_it_changed(
     it. An accepted write is followed by a refresh, once the lock is free.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     coordinator.async_set_updated_data(
         {**coordinator.data, HLC_PATH: "false", "WDR/enabled": "true"}
     )
@@ -841,7 +841,7 @@ async def test_a_write_after_the_credentials_were_replaced_is_refused(
     The old ones would only fail again, and count towards locking the account.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     hass.config_entries.async_update_entry(
         mock_config_entry,
         data={**mock_config_entry.data, CONF_PASSWORD: "corrected"},
@@ -883,6 +883,7 @@ async def test_a_client_made_for_a_cancelled_setup_is_closed(
                 data[CONF_PASSWORD],
                 data[CONF_SSL],
                 True,
+                False,
             )
         )
         await hass.async_add_executor_job(started.wait, 5)
@@ -911,7 +912,7 @@ async def test_a_rejection_cancelled_while_the_stream_stops_still_completes(
     credentials, while every later write fails.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     error = ISAPIAuthError("Invalid credentials", 401)
     mock_image_settings.set_image_setting.side_effect = error
     mock_image_settings.get_image_values.side_effect = error
@@ -966,7 +967,7 @@ async def test_an_unload_cancelled_while_a_request_runs_still_closes_the_client(
 ) -> None:
     """Test the client is closed once the request ends, though the unload is gone."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
 
     # A request is running: the unload waits for it before closing the client.
     await coordinator.lock.acquire()
@@ -1187,7 +1188,7 @@ async def test_an_unload_cancelled_while_the_stream_stops_still_closes_the_clien
     The platforms are gone by then: the client must not stay open.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -1231,7 +1232,7 @@ async def test_an_unload_cancelled_while_the_platforms_unload_still_ends(
     client closed. A CancelledError would leave the entry unloading until a restart.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = asyncio.Event()
     finish = asyncio.Event()
     unload_platforms = hass.config_entries.async_unload_platforms_or_raise
@@ -1299,7 +1300,7 @@ async def test_a_write_whose_executor_future_is_cancelled_keeps_the_client(
     jobs keep running in their threads.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -1410,7 +1411,7 @@ async def test_the_close_keeps_the_client_though_its_future_is_cancelled(
 ) -> None:
     """Test the coordinator's close holds the lock until the client is closed."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -1598,7 +1599,7 @@ async def test_a_close_cancelled_before_it_ran_is_still_owed(
 ) -> None:
     """Test the client only counts as closed once its close has run."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     close = mock_image_settings.close
     close.reset_mock()
     queued: list[asyncio.Future[Any]] = []
@@ -1685,7 +1686,7 @@ async def test_a_write_rejected_while_home_assistant_stops_asks_for_nothing(
     Home Assistant's stop only stops the stream: the coordinator is not shut down.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -1718,7 +1719,7 @@ async def test_a_poll_rejected_while_home_assistant_stops_asks_for_nothing(
 ) -> None:
     """Test a 401 of a poll that ends while Home Assistant stops starts no reauth."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
 
@@ -1760,7 +1761,7 @@ async def test_a_write_that_ends_while_home_assistant_stops_does_not_poll(
     Also when it was cancelled: the refresh would only send another request.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     polls = mock_image_settings.get_image_values.call_count
     started = threading.Event()
     finish = threading.Event()
@@ -1796,7 +1797,7 @@ async def test_a_write_queued_while_home_assistant_stops_is_refused(
     The one already sent still ends, and shows what it changed.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     started = threading.Event()
     finish = threading.Event()
     sent: list[str] = []
@@ -1838,7 +1839,7 @@ async def test_a_failed_stream_stop_after_a_rejected_write_still_asks_for_creden
     With polling disabled, nothing else would ask for new credentials.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.side_effect = ISAPIAuthError(
         "Invalid credentials", 401
     )
@@ -1873,7 +1874,7 @@ async def test_a_conflict_on_another_setting_shows_the_cameras_code(
     A write to anything else did not turn highlight compensation, WDR or defog on.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.return_value = ImageWriteResult(
         False, 403, sub_status
     )
@@ -1928,7 +1929,7 @@ async def test_a_conflict_message_fits_the_setting_and_its_value(
     camera's code.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.return_value = ImageWriteResult(
         False, 403, sub_status
     )
@@ -1950,7 +1951,7 @@ async def test_a_conflict_whose_blocker_was_switched_off_shows_the_cameras_code(
     Telling to turn WDR off first would be wrong: it is off already.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.return_value = ImageWriteResult(
         False, 403, "WDROrDehazeMutexHLC", also_changed={"WDR/mode": "close"}
     )
@@ -2002,7 +2003,7 @@ async def test_a_rejection_after_an_unload_that_closed_the_client_is_dealt_with(
     the rejected password.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.side_effect = ISAPIAuthError(
         "Invalid credentials", 401
     )
@@ -2051,7 +2052,7 @@ async def test_the_stream_is_stopped_again_when_the_reload_with_new_credentials_
     still sending the rejected password, is stopped again, without a new flow.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.side_effect = ISAPIAuthError(
         "Invalid credentials", 401
     )
@@ -2140,7 +2141,7 @@ async def test_new_credentials_after_a_failed_unload_need_a_restart(
     must not say it was reloaded.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.side_effect = ISAPIAuthError(
         "Invalid credentials", 401
     )
@@ -2189,7 +2190,7 @@ async def test_a_rejection_deferred_by_a_cancelled_unload(
     If it works, the entry is gone, and nothing is asked for.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.side_effect = ISAPIAuthError(
         "Invalid credentials", 401
     )
@@ -2252,7 +2253,7 @@ async def test_a_rejection_deferred_by_an_unload_as_home_assistant_stops_is_drop
 ) -> None:
     """Test a failed unload while Home Assistant stops asks for no credentials."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.side_effect = ISAPIAuthError(
         "Invalid credentials", 401
     )
@@ -2278,7 +2279,7 @@ async def test_a_deferred_rejection_of_replaced_credentials_as_home_assistant_st
 ) -> None:
     """Test a failed unload as Home Assistant stops leaves the stream to its stop."""
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.set_image_setting.side_effect = ISAPIAuthError(
         "Invalid credentials", 401
     )
@@ -2311,7 +2312,7 @@ async def test_a_refused_write_after_a_failed_poll_keeps_the_entities_unavailabl
     Only those values are known: the others are stale since the poll failed.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     mock_image_settings.get_image_values.side_effect = ISAPIConnectionError("timeout")
     freezer.tick(SCAN_INTERVAL + timedelta(seconds=1))
     async_fire_time_changed(hass)
@@ -2352,7 +2353,7 @@ async def test_a_write_after_a_failed_poll_waits_for_a_poll_to_be_available(
     available again, once a poll works.
     """
     await setup_integration(hass, mock_config_entry)
-    coordinator = mock_config_entry.runtime_data.image_coordinator
+    [coordinator] = mock_config_entry.runtime_data.image_coordinators
     values = dict(mock_image_settings.get_image_values.return_value)
     mock_image_settings.get_image_values.side_effect = ISAPIConnectionError("timeout")
     freezer.tick(SCAN_INTERVAL + timedelta(seconds=1))

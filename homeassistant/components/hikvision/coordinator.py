@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
 import contextlib
+from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import partial
 import logging
@@ -31,6 +32,9 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=30)
+# The cameras of an NVR share one client and one lock, so they are polled one after
+# the other. A slower poll keeps a write from waiting behind dozens of reads.
+NVR_SCAN_INTERVAL = timedelta(minutes=5)
 
 # The sub status codes with which a camera refuses a setting that another one excludes
 # Highlight compensation cannot be on together with WDR or defog. Each code says
@@ -278,8 +282,34 @@ async def async_stop_stream(hass: HomeAssistant, data: HikvisionData) -> None:
         return
 
 
+@dataclass
+class HikvisionImageClient:
+    """The image settings client of a setup, and what its coordinators share.
+
+    A standalone camera has one coordinator. An NVR has one per attached camera,
+    all reached with the same client and the same login.
+    """
+
+    client: ISAPIClient
+    # A write reads the whole document, edits it and sends it back, so it must
+    # not overlap with another request on the same client.
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Set under the lock by the first 401, and kept for the life of this client:
+    # a request queued behind it must not send the rejected password again, as
+    # repeated attempts can lock the account. A reload makes a new client.
+    credentials_rejected: bool = False
+    # Set under the lock when the client is closed: a request that was queued,
+    # such as an action waiting for its turn, must not use it.
+    closed: bool = False
+
+
 class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
-    """Poll the current image settings and write changes to the camera."""
+    """Poll the current image settings and write changes to the camera.
+
+    A standalone camera has one coordinator (``channel`` is None). An NVR has one
+    per attached camera, reached through the NVR's proxy endpoints, and they share
+    its client.
+    """
 
     config_entry: HikvisionConfigEntry
 
@@ -287,19 +317,34 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
         self,
         hass: HomeAssistant,
         config_entry: HikvisionConfigEntry,
-        client: ISAPIClient,
+        client: ISAPIClient | HikvisionImageClient,
         settings: list[ImageSetting],
+        channel: int | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
             config_entry=config_entry,
-            name=f"{DOMAIN} image settings",
-            update_interval=SCAN_INTERVAL,
+            name=(
+                f"{DOMAIN} image settings"
+                if channel is None
+                else f"{DOMAIN} image settings channel {channel}"
+            ),
+            update_interval=SCAN_INTERVAL if channel is None else NVR_SCAN_INTERVAL,
         )
-        self.client = client
+        self.shared = (
+            client
+            if isinstance(client, HikvisionImageClient)
+            else HikvisionImageClient(client)
+        )
         self.settings = settings
+        self.channel = channel
+        # What to pass to the client to reach this camera: nothing for a
+        # standalone camera, the NVR's channel ID and its proxy for an attached one.
+        self._target: dict[str, Any] = (
+            {} if channel is None else {"channel": channel, "proxy": True}
+        )
         # The camera may spell a path in its values otherwise than in its
         # capabilities, which the entities and the writes use: the values are
         # stored under that spelling, so that each setting has one value.
@@ -308,9 +353,6 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
             for path in (setting.path, setting.linked_enabled_path):
                 if path is not None:
                     self._spellings.setdefault(path.lower(), path)
-        # A write reads the whole document, edits it and sends it back, so it must
-        # not overlap with another request on the same client.
-        self.lock = asyncio.Lock()
         # The settings, in lowercase, that this setup has an entity for, including
         # the disabled ones. Not what is left in the entity registry from an earlier
         # setup: a setting that is no longer accepted may still have an entry there.
@@ -319,13 +361,6 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
         # is in Home Assistant. A disabled entity is not, nor one left in the
         # registry by an earlier setup.
         self.entity_ids: dict[str, str] = {}
-        # Set under the lock by the first 401, and kept for the life of this client:
-        # a request queued behind it must not send the rejected password again, as
-        # repeated attempts can lock the account. A reload makes a new client.
-        self.credentials_rejected = False
-        # Set under the lock when the client is closed: a request that was queued,
-        # such as an action waiting for its turn, must not use it.
-        self.closed = False
         # Set by the unload before its first await, and cleared again if it fails: a
         # request that ends meanwhile must not ask for credentials, which the reload
         # that unloads this may just have replaced.
@@ -334,6 +369,45 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
         # reauthentication started. An unload defers that, and if the unload fails
         # it is still owed.
         self._rejection_pending = False
+
+    @property
+    def client(self) -> ISAPIClient:
+        """Return the client, shared with the other cameras of an NVR."""
+        return self.shared.client
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        """Return the lock of the client: one request at a time on it."""
+        return self.shared.lock
+
+    @property
+    def credentials_rejected(self) -> bool:
+        """Return whether the device rejected the password of this client.
+
+        The cameras of an NVR share the login, so they share this too.
+        """
+        return self.shared.credentials_rejected
+
+    @credentials_rejected.setter
+    def credentials_rejected(self, rejected: bool) -> None:
+        self.shared.credentials_rejected = rejected
+
+    @property
+    def closed(self) -> bool:
+        """Return whether the client is closed."""
+        return self.shared.closed
+
+    @closed.setter
+    def closed(self, closed: bool) -> None:
+        self.shared.closed = closed
+
+    @property
+    def unique_id_prefix(self) -> str:
+        """Return what the unique IDs of this camera's entities start with."""
+        device_id = self.config_entry.runtime_data.device_id
+        if self.channel is None:
+            return f"{device_id}_image_"
+        return f"{device_id}_{self.channel}_image_"
 
     @override
     async def _async_update_data(self) -> dict[str, str]:
@@ -353,7 +427,9 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
                         translation_domain=DOMAIN, translation_key="invalid_auth"
                     )
                 return self._as_settings_spell(
-                    await self._async_send(self.client.get_image_values)
+                    await self._async_send(
+                        partial(self.client.get_image_values, **self._target)
+                    )
                 )
         except ISAPIError as err:
             if (
@@ -466,6 +542,7 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
         # The unload may have begun while the stream was stopping.
         if not self._stopping:
             self._rejection_pending = False
+            await self._async_stop_the_others()
             # Published here too, not only by the error the poll raises after this:
             # a cancelled poll raises nothing, and the entities would stay available.
             self.async_set_update_error(
@@ -506,6 +583,7 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
             # The unload began while the stream was stopping.
             return
         self._rejection_pending = False
+        await self._async_stop_the_others()
         await self.async_shutdown()
         self.async_set_update_error(
             ConfigEntryAuthFailed(
@@ -513,6 +591,24 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
             )
         )
         self.config_entry.async_start_reauth(self.hass)
+
+    async def _async_stop_the_others(self) -> None:
+        """Stop the polling of the other cameras of an NVR, which share the login.
+
+        They would send the rejected password again. The reload that applies new
+        credentials starts them again.
+        """
+        for coordinator in self.config_entry.runtime_data.image_coordinators:
+            if coordinator is self:
+                continue
+            # What this rejection calls for is being done here.
+            coordinator._rejection_pending = False  # noqa: SLF001
+            await coordinator.async_shutdown()
+            coordinator.async_set_update_error(
+                ConfigEntryAuthFailed(
+                    translation_domain=DOMAIN, translation_key="invalid_auth"
+                )
+            )
 
     async def async_unload_failed(self) -> None:
         """Carry on after an unload that failed, and left the entry loaded.
@@ -598,7 +694,9 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
         stale when no entity listens, as the coordinator does not poll then.
         """
         return self._as_settings_spell(
-            await self.async_diagnostics_request(self.client.get_image_values)
+            await self.async_diagnostics_request(
+                partial(self.client.get_image_values, **self._target)
+            )
         )
 
     async def async_set_setting(
@@ -609,7 +707,11 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
         The context is that of the action that asked for the change.
         """
         await self._async_write(
-            self.client.set_image_setting, (path, value), path, {path: value}, context
+            partial(self.client.set_image_setting, **self._target),
+            (path, value),
+            path,
+            {path: value},
+            context,
         )
 
     async def async_set_linked_setting(
@@ -622,7 +724,7 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
                 "false" if value == setting.off_value else "true"
             )
         await self._async_write(
-            self.client.set_image_linked_setting,
+            partial(self.client.set_image_linked_setting, **self._target),
             (setting, value),
             setting.path,
             updates,
@@ -787,9 +889,16 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
 
     def _async_device_id(self) -> str | None:
         """Return the ID of the camera's device in the device registry."""
-        device = dr.async_get(self.hass).async_get_device_by_identifier(
-            (DOMAIN, self.config_entry.runtime_data.device_id),
-            self.config_entry.entry_id,
+        identifier = self.config_entry.runtime_data.device_id
+        if self.channel is not None:
+            # A camera attached to an NVR is the device of its channel.
+            identifier = f"{identifier}_{self.channel}"
+        registry = dr.async_get(self.hass)
+        entry_id = self.config_entry.entry_id
+        device = registry.async_get_device_by_identifier(
+            (DOMAIN, identifier), entry_id
+        ) or registry.async_get_child_device_by_identifier(
+            (DOMAIN, identifier), entry_id
         )
         return device.id if device else None
 
