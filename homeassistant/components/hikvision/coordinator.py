@@ -592,6 +592,20 @@ class HikvisionImageCoordinator(DataUpdateCoordinator[dict[str, str]]):
         )
         self.config_entry.async_start_reauth(self.hass)
 
+    async def async_stream_rejected(self) -> None:
+        """Deal with the event stream being refused the password of this client.
+
+        The image settings use the same login: nothing sends it again, and new
+        credentials are asked for. A request that is running ends first, as its
+        result would make the entities available again.
+        """
+        # Before the first await: a request waiting for the lock is refused.
+        self.credentials_rejected = True
+        self._rejection_pending = True
+        async with self.lock:
+            pass
+        await self._async_reject_credentials()
+
     async def _async_stop_the_others(self) -> None:
         """Stop the polling of the other cameras of an NVR, which share the login.
 
